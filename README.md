@@ -191,24 +191,6 @@ tqdm
 
 MATLAB is required only for synthetic data generation scripts.
 
-## Git Workflow
-
-Typical workflow for recording code changes:
-
-```bash
-git status
-git add .
-git commit -m "Describe your change"
-git push
-```
-
-This repository already ignores generated artifacts such as:
-
-- `checkpoints/`
-- `logs/`
-- `results/`
-- `__pycache__/`
-
 ## Current Status
 
 This repository is under active iteration. The current codebase includes:
