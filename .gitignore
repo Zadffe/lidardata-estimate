@@ -13,3 +13,5 @@ results/
 
 .idea/
 .vscode/
+
+test/*.png
