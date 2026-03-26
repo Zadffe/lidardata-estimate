@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+checkpoints/
+logs/
+results/
+
+*.pth
+*.pt
+*.ckpt
+*.mat
+*.npz
+
+.idea/
+.vscode/
