@@ -17,7 +17,7 @@ class Config:
     # - "ConvLSTM"
     # - "PureCNN"
     # - "TemporalTransformer"
-    model_name = "ConvLSTM"
+    model_name = "TemporalTransformer"
     pretrained = False
 
     # 统一的实验后缀。
@@ -25,7 +25,7 @@ class Config:
     # checkpoints/<模型名>_<experiment_tag>
     # results/<模型名>_<experiment_tag>
     # logs/<模型名>_<experiment_tag>
-    experiment_tag = "datasetsv3_realdataloss"
+    experiment_tag = "datasetsv3_realdataloss_80drop"
 
     # CNN + ConvLSTM 参数
     convlstm_hidden = 64
