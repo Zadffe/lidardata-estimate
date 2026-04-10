@@ -22,6 +22,7 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  触发 3D 投影注册
+from data.dataset import LidarWaveDataset  # 直接利用 dataset.py 中的 Config 和数据路径
 
 # ── 中文字体配置（Windows 优先 SimHei，找不到则用系统第一个支持 CJK 的字体）──
 def _setup_chinese_font():
@@ -42,77 +43,6 @@ def _setup_chinese_font():
 _setup_chinese_font()
 
 from configs.config import Config
-
-
-# ─────────────────────────────────────────────
-# 独立的 apply_masking（和 dataset.py 完全一致）
-# ─────────────────────────────────────────────
-def apply_masking(tensor: np.ndarray) -> np.ndarray:
-    """Augment [T, H, W] tensor with UAV LiDAR-like artifacts."""
-    tensor = tensor.copy()
-    T, H, W = tensor.shape
-
-    # 1) Dynamic random dropout: random missing returns on water surface.
-    if random.random() < 0.8:
-        drop_prob = random.uniform(0.2, 0.9)
-        rand_mask = np.random.choice([0, 1], size=(T, H, W), p=[drop_prob, 1 - drop_prob])
-        tensor = tensor * rand_mask
-
-    # 2) Scan-line packet loss: contiguous rows/cols disappear for short time.
-    if random.random() < 0.55:
-        n_lines = random.randint(1, max(1, min(H, W) // 12))
-        use_rows = (random.random() < 0.5)
-        for _ in range(n_lines):
-            line_idx = random.randint(0, (H - 1) if use_rows else (W - 1))
-            start_t = random.randint(0, T - 1)
-            dur = random.randint(max(1, T // 8), max(2, T // 3))
-            end_t = min(T, start_t + dur)
-            if use_rows:
-                tensor[start_t:end_t, line_idx, :] = 0
-            else:
-                tensor[start_t:end_t, :, line_idx] = 0
-
-    # 3) Range attenuation + range-dependent noise.
-    if random.random() < 0.60:
-        y_grid, x_grid = np.ogrid[:H, :W]
-        center_y, center_x = (H - 1) / 2.0, (W - 1) / 2.0
-        dist = np.sqrt((x_grid - center_x) ** 2 + (y_grid - center_y) ** 2)
-        dist_norm = dist / max(float(dist.max()), 1e-6)
-
-        atten_strength = random.uniform(0.20, 0.6)
-        atten = np.exp(-atten_strength * (dist_norm ** 2)).astype(np.float32)
-        tensor = tensor * atten[None, :, :]
-
-        base_std = float(np.std(tensor)) + 1e-6
-        noise_level = random.uniform(0.01, 0.2) * base_std
-        range_sigma = (0.35 + 0.65 * dist_norm).astype(np.float32)
-        noise = np.random.normal(0.0, 1.0, size=tensor.shape).astype(np.float32)
-        signal_mask = (np.abs(tensor) > 1e-8).astype(np.float32)
-        tensor = tensor + noise * (noise_level * range_sigma[None, :, :]) * signal_mask
-
-    # 4) UAV pose jitter: frame-wise small translation with blank edges.
-    if random.random() < 0.70:
-        max_shift = max(1, int(min(H, W) * 0.2))
-        for t in range(T):
-            dx = random.randint(-max_shift, max_shift)
-            dy = random.randint(-max_shift, max_shift)
-            if dx == 0 and dy == 0:
-                continue
-
-            shifted = np.roll(tensor[t], shift=(dy, dx), axis=(0, 1))
-
-            if dy > 0:
-                shifted[:dy, :] = 0
-            elif dy < 0:
-                shifted[dy:, :] = 0
-            if dx > 0:
-                shifted[:, :dx] = 0
-            elif dx < 0:
-                shifted[:, dx:] = 0
-
-            tensor[t] = shifted
-
-    return tensor
 
 
 # ─────────────────────────────────────────────
@@ -153,7 +83,8 @@ def visualize(mode: str = 'test', sample_idx: int = None, frame_idx: int = None,
         frame_idx = T // 2
     frame_idx = max(0, min(frame_idx, T - 1))
 
-    tensor_aug = apply_masking(tensor_raw)
+    aug_dataset = LidarWaveDataset(mode=mode, augment=True)
+    tensor_aug = aug_dataset.apply_masking(tensor_raw)
     frame_orig = tensor_raw[frame_idx]
     frame_aug = tensor_aug[frame_idx]
 
