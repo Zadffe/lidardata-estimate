@@ -20,12 +20,18 @@ class Config:
     model_name = "TemporalTransformer"
     pretrained = False
 
-    # 统一的实验后缀。
-    # 切换 model_name 时，目录会自动生成成:
+    # 实验名称后缀。
+    # 输出目录会自动生成为:
     # checkpoints/<模型名>_<experiment_tag>
     # results/<模型名>_<experiment_tag>
     # logs/<模型名>_<experiment_tag>
     experiment_tag = "datasetsv3_realdataloss_80drop"
+
+    # 断点续训配置
+    resume_training = False
+    resume_checkpoint_path = ""
+    save_latest_checkpoint = True
+    checkpoint_every = 20
 
     # CNN + ConvLSTM 参数
     convlstm_hidden = 64
@@ -63,7 +69,6 @@ class Config:
         ):
             return "TemporalTransformer"
 
-        # 未知名字时，尽量保留原始信息，但去掉目录中不安全的字符。
         safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(model_name))
         return safe_name or "UnknownModel"
 
