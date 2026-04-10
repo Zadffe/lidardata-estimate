@@ -26,6 +26,9 @@ class LidarWaveDataset(Dataset):
         if len(self.file_list) == 0:
             print(f"警告: {mode} 集未找到 .mat 文件")
 
+        # 每一帧固定丢失 80% 的有效点，但高密度区域只会出现在中心附近。
+        self.frame_dropout_rate = 0.80
+
     def __len__(self):
         return len(self.file_list)
 
@@ -103,56 +106,79 @@ class LidarWaveDataset(Dataset):
 
         return tensor
 
+    def apply_fixed_frame_dropout(self, tensor: np.ndarray) -> np.ndarray:
+        """
+        对每一帧的有效点执行固定比例丢点，同时引入局部高密度热点。
+        热点只在中心附近随机漂移，越靠近边缘保留概率越低，
+        因而始终满足“中心更密、边缘更稀”的雷达衰减特性。
+        输入/输出均为 [T, H, W]。
+        """
+        tensor = tensor.copy()
+        T, H, W = tensor.shape
+        keep_ratio = 1.0 - self.frame_dropout_rate
+        y_coords = np.arange(H, dtype=np.float32)
+        x_coords = np.arange(W, dtype=np.float32)
+        yy, xx = np.meshgrid(y_coords, x_coords, indexing='ij')
+        center_x = (W - 1) / 2.0
+        center_y = (H - 1) / 2.0
+
+        dist_to_center = np.sqrt((xx - center_x) ** 2 + (yy - center_y) ** 2)
+        dist_norm = dist_to_center / max(float(dist_to_center.max()), 1e-6)
+
+        for t in range(T):
+            valid_mask = np.abs(tensor[t]) > 1e-8
+            valid_idx = np.flatnonzero(valid_mask)
+            valid_count = valid_idx.size
+            if valid_count == 0:
+                continue
+
+            keep_count = max(1, int(round(valid_count * keep_ratio)))
+            if keep_count >= valid_count:
+                continue
+
+            hotspot_radius_x = W * 0.18
+            hotspot_radius_y = H * 0.18
+            hotspot_x = center_x + random.uniform(-hotspot_radius_x, hotspot_radius_x)
+            hotspot_y = center_y + random.uniform(-hotspot_radius_y, hotspot_radius_y)
+            sigma_x = random.uniform(max(3.0, W * 0.10), max(6.0, W * 0.24))
+            sigma_y = random.uniform(max(3.0, H * 0.10), max(6.0, H * 0.24))
+            theta = random.uniform(0.0, np.pi)
+
+            x_shift = xx - hotspot_x
+            y_shift = yy - hotspot_y
+            x_rot = x_shift * np.cos(theta) + y_shift * np.sin(theta)
+            y_rot = -x_shift * np.sin(theta) + y_shift * np.cos(theta)
+
+            hotspot = np.exp(
+                -0.5 * ((x_rot / sigma_x) ** 2 + (y_rot / sigma_y) ** 2)
+            ).astype(np.float32)
+
+            center_gamma = random.uniform(1.6, 2.4)
+            center_floor = random.uniform(0.02, 0.06)
+            center_prior = center_floor + (1.0 - center_floor) * (1.0 - dist_norm ** center_gamma)
+            center_prior = np.clip(center_prior, center_floor, 1.0).astype(np.float32)
+
+            baseline = random.uniform(0.03, 0.08)
+            hotspot_gain = random.uniform(0.88, 1.15)
+            weight_map = center_prior * (baseline + hotspot_gain * hotspot)
+            weight_map = weight_map + np.random.rand(H, W).astype(np.float32) * 1e-3
+
+            valid_weights = weight_map.reshape(-1)[valid_idx]
+            valid_weights = valid_weights / np.sum(valid_weights)
+            keep_idx = np.random.choice(valid_idx, size=keep_count, replace=False, p=valid_weights)
+
+            frame_mask = np.zeros(tensor[t].size, dtype=bool)
+            frame_mask[keep_idx] = True
+            tensor[t] = tensor[t] * frame_mask.reshape(tensor[t].shape)
+
+        return tensor
+
     def apply_masking(self, tensor: np.ndarray) -> np.ndarray:
         """
         输入: [T, H, W] numpy 张量
         输出: 增强后的 numpy 张量
         """
-        tensor = tensor.copy()
-        T, H, W = tensor.shape
-
-        # 1) 动态随机丢点：模拟回波随机缺失
-        if random.random() < 0.75:
-            drop_prob = random.uniform(0.3, 0.9)
-            rand_mask = np.random.choice([0, 1], size=(T, H, W), p=[drop_prob, 1 - drop_prob])
-            tensor = tensor * rand_mask
-
-
-        # 3) 距离衰减：离雷达越远，丢点越严重
-        if random.random() < 0.8:
-            tensor = self.apply_range_dependent_dropout(tensor)
-
-        # 4) 每帧局部高密度区域漂移：模拟无人机抖动带来的帧间密度分布变化
-        if random.random() < 0.75:
-            tensor = self.apply_framewise_density_jitter(tensor)
-
-        # 5) 块状区域直接丢失：模拟一整块区域无回波
-        if random.random() < 0.55:
-            tensor = self.apply_block_dropout(tensor)
-
-        # 6) 无人机姿态微抖：逐帧小平移，边缘补零
-        if random.random() < 0.70:
-            max_shift = max(1, int(min(H, W) * 0.2))
-            for t in range(T):
-                dx = random.randint(-max_shift, max_shift)
-                dy = random.randint(-max_shift, max_shift)
-                if dx == 0 and dy == 0:
-                    continue
-
-                shifted = np.roll(tensor[t], shift=(dy, dx), axis=(0, 1))
-
-                if dy > 0:
-                    shifted[:dy, :] = 0
-                elif dy < 0:
-                    shifted[dy:, :] = 0
-                if dx > 0:
-                    shifted[:, :dx] = 0
-                elif dx < 0:
-                    shifted[:, dx:] = 0
-
-                tensor[t] = shifted
-
-        return tensor
+        return self.apply_fixed_frame_dropout(tensor)
 
     def __getitem__(self, idx):
         mat_path = self.file_list[idx]

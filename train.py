@@ -52,7 +52,7 @@ def train():
     # 2. 准备数据 (训练集 + 验证集)
     print("正在加载数据集...")
     # 开启 augment=True 以模拟真实雷达的动态数据丢失
-    train_ds = LidarWaveDataset(mode='train', augment=False)
+    train_ds = LidarWaveDataset(mode='train', augment=True)
     # 验证集通常保持纯净，或者也可以开启 augment 来评估鲁棒性
     val_ds = LidarWaveDataset(mode='val', augment=False)
     
@@ -125,7 +125,7 @@ def train():
 
                 # 这里的 0.5 是权重，可以根据需要调整。
                 # 比如你觉得方向更重要，可以: loss_dir + 0.2 * loss_hs
-                total_loss = loss_dir + 0.3 * loss_hs
+                total_loss = loss_dir + loss_hs
 
             # 反向传播
             scaler.scale(total_loss).backward()

@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from models.vision_transformer import build_temporal_transformer_model
+
 
 class FrameEncoder(nn.Module):
     def __init__(self, in_channels=3, base_channels=32):
@@ -269,7 +271,16 @@ def build_model(cfg):
             temporal_stride=getattr(cfg, "temporal_stride", 2),
         )
 
+    if model_name in (
+        "temporaltransformer",
+        "cnn_temporal_transformer",
+        "cnn+transformer",
+        "transformer",
+        "vit",
+    ):
+        return build_temporal_transformer_model(cfg)
+
     raise ValueError(
         f"Unsupported model_name={getattr(cfg, 'model_name', None)}. "
-        f"Use 'ConvLSTM' or 'PureCNN'."
+        f"Use 'ConvLSTM', 'PureCNN', or 'TemporalTransformer'."
     )
