@@ -1,11 +1,18 @@
+import os
+
+
 class Config:
-    data_root = r"F:\Research__dir\dl_lidar\datasets\Dataset_Wave_Lidar_v3"
+    data_root = r"F:\Research__dir\dl_lidar\datasets\Dataset_Wave_Lidar_v3_10000samples"
+    output_root = "./all_exps_result"
 
     epochs = 300
     batch_size = 32
     lr = 1e-4
     weight_decay = 1e-4
     num_workers = 4
+    log_interval = 20
+    save_interval = 20
+    seed = 42
 
     frames = 64
     height = 101
@@ -13,45 +20,34 @@ class Config:
     max_hs = 6.0
     lidar_scale = 5.0
 
-    # 可选模型:
+    # 可选模型名称：
     # - "ConvLSTM"
     # - "PureCNN"
     # - "TemporalTransformer"
     model_name = "TemporalTransformer"
     pretrained = False
 
-    # 实验名称后缀。
-    # 输出目录会自动生成为:
-    # checkpoints/<模型名>_<experiment_tag>
-    # results/<模型名>_<experiment_tag>
-    # logs/<模型名>_<experiment_tag>
+    # 当 experiment_name 为空时，
+    # 默认使用 "<标准化模型名>_<experiment_tag>" 作为实验目录名。
     experiment_tag = "datasetsv3_realdataloss_80drop"
+    experiment_name = ""
 
-    # 断点续训配置
     resume_training = False
     resume_checkpoint_path = ""
     save_latest_checkpoint = True
     checkpoint_every = 20
 
-    # 推理 / 评估 checkpoint 配置
-    # 默认读取 best_model.pth
-    # 如果 inference_use_latest_checkpoint=True，则优先读取 latest_checkpoint.pth
-    # 如果 inference_checkpoint_path 非空，则优先读取这个显式路径
     inference_use_latest_checkpoint = False
     inference_checkpoint_path = ""
 
-    # 评估 / 推理时是否对测试集启用增强
     test_augment = True
 
-    # CNN + ConvLSTM 参数
     convlstm_hidden = 64
     convlstm_layers = 1
 
-    # 公共时序参数
     temporal_pool = "max"
     temporal_stride = 2
 
-    # CNN Stem + Temporal Transformer 参数
     vit_embed_dim = 128
     vit_depth = 4
     vit_num_heads = 8
@@ -84,8 +80,10 @@ class Config:
 
     def refresh_output_dirs(self):
         model_dir = self._normalize_model_dir_name(self.model_name)
-        run_name = f"{model_dir}_{self.experiment_tag}"
+        run_name = str(getattr(self, "experiment_name", "") or "").strip()
+        if not run_name:
+            run_name = f"{model_dir}_{self.experiment_tag}"
 
-        self.save_dir = f"./checkpoints/{run_name}"
-        self.results_dir = f"./results/{run_name}"
-        self.log_dir = f"./logs/{run_name}"
+        self.save_dir = os.path.join(self.output_root, run_name, "checkpoints")
+        self.results_dir = os.path.join(self.output_root, run_name, "results")
+        self.log_dir = os.path.join(self.output_root, run_name, "logs")
