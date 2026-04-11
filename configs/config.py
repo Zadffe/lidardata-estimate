@@ -1,7 +1,7 @@
 class Config:
     data_root = r"F:\Research__dir\dl_lidar\datasets\Dataset_Wave_Lidar_v3"
 
-    epochs = 100
+    epochs = 300
     batch_size = 32
     lr = 1e-4
     weight_decay = 1e-4
@@ -32,6 +32,16 @@ class Config:
     resume_checkpoint_path = ""
     save_latest_checkpoint = True
     checkpoint_every = 20
+
+    # 推理 / 评估 checkpoint 配置
+    # 默认读取 best_model.pth
+    # 如果 inference_use_latest_checkpoint=True，则优先读取 latest_checkpoint.pth
+    # 如果 inference_checkpoint_path 非空，则优先读取这个显式路径
+    inference_use_latest_checkpoint = False
+    inference_checkpoint_path = ""
+
+    # 评估 / 推理时是否对测试集启用增强
+    test_augment = True
 
     # CNN + ConvLSTM 参数
     convlstm_hidden = 64

@@ -17,14 +17,14 @@ end
 %% 2. 全局配置
 % base_dir: 数据集输出目录
 % n_train / n_val / n_test: 三个划分中样本数量
-base_dir = 'Dataset_Wave_Lidar_v3';
-n_train = 2100;
-n_val   = 450;
-n_test  = 450;
+base_dir = '../datasets/Dataset_Wave_Lidar_v3_10000samples';
+n_train = 8000;
+n_val   = 1000;
+n_test  = 1000;
 
 % master_seed 只控制“参数采样与划分”。
 % 这样每次重新生成数据时，只要这个种子不变，参数池和 split 就可复现。
-master_seed = 20260401;
+master_seed = 20260410;
 
 % clip_settings 是单个样本（一个 clip）的基础设置。
 clip_settings.duration = 16;
