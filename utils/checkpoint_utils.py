@@ -5,9 +5,9 @@ import torch
 
 def load_model_weights(model, checkpoint_path, device):
     """
-    兼容两种权重格式:
-    1. 纯模型权重: model.state_dict()
-    2. 完整训练检查点: 包含 model_state_dict 的字典
+    兼容两种权重格式：
+    1. 纯模型权重：model.state_dict()
+    2. 完整训练断点：包含 model_state_dict 的 checkpoint
     """
 
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -32,13 +32,14 @@ def resolve_resume_checkpoint_path(cfg, latest_checkpoint_path):
 
 def load_training_checkpoint(model, optimizer, scaler, checkpoint_path, device, logger):
     """
-    加载完整训练状态。
+    恢复训练断点。
 
-    支持两种情况:
-    1. 完整 checkpoint:
-       恢复模型、优化器、AMP、epoch、best_val_loss、loss 历史
-    2. 纯模型权重:
-       只恢复模型参数，从 epoch 0 开始重新训练
+    返回：
+    - start_epoch
+    - best_val_loss
+    - train_losses
+    - val_losses
+    - resumed: 是否成功加载了某个断点
     """
 
     start_epoch = 0
@@ -76,10 +77,7 @@ def load_training_checkpoint(model, optimizer, scaler, checkpoint_path, device, 
         )
         return start_epoch, best_val_loss, train_losses, val_losses, True
 
-    logger.warning(
-        "Loaded a model-only checkpoint for resume. "
-        "Optimizer, scaler, epoch, and best_val_loss were not restored."
-    )
+    logger.warning("Loaded a model-only checkpoint for resume. Optimizer and epoch state were not restored.")
     logger.warning(f"Model-only checkpoint path: {checkpoint_path}")
     return start_epoch, best_val_loss, train_losses, val_losses, True
 

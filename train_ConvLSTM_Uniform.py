@@ -16,12 +16,15 @@ from tqdm import tqdm
 
 from configs.config import Config
 from data.dataset import LidarWaveDataset
-from models.wave_cnn import build_model
+from models.CNN_ConvLSTM_Uniform import build_model
 from utils.checkpoint_utils import (
     load_training_checkpoint,
     resolve_resume_checkpoint_path,
     save_training_checkpoint,
 )
+
+
+DEFAULT_UNIFORM_DATA_ROOT = r"F:\Research__dir\dl_lidar\datasets\Dataset_Wave_Lidar_10000samples_uniform_grid"
 
 
 def setup_logging(log_dir, prefix):
@@ -50,14 +53,8 @@ def set_random_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def get_default_experiment_name(model_name):
-    normalized = Config._normalize_model_dir_name(model_name)
-    mapping = {
-        "ConvLSTM": "convlstm_default",
-        "CNN": "cnn_default",
-        "TemporalTransformer": "transformer_default",
-    }
-    return mapping.get(normalized, f"{normalized.lower()}_default")
+def get_default_experiment_name():
+    return "ConvLSTM_uniform_grid_default"
 
 
 def build_experiment_dirs(output_root, experiment_name):
@@ -78,19 +75,64 @@ def resolve_device(device_arg):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def init_swanlab(cfg):
+    if not getattr(cfg, "enable_swanlab", False):
+        return None
+
+    try:
+        import swanlab
+    except ImportError as exc:
+        raise RuntimeError(
+            "swanlab is not installed. Please run `pip install swanlab` first, or disable --enable-swanlab."
+        ) from exc
+
+    experiment_name = str(getattr(cfg, "swanlab_experiment_name", "") or "").strip() or cfg.experiment_name
+    tags_raw = str(getattr(cfg, "swanlab_tags", "") or "").strip()
+    tags = [tag.strip() for tag in tags_raw.split(",") if tag.strip()]
+
+    config_dict = {
+        "model_name": cfg.model_name,
+        "experiment_name": cfg.experiment_name,
+        "data_root": cfg.data_root,
+        "epochs": cfg.epochs,
+        "batch_size": cfg.batch_size,
+        "lr": cfg.lr,
+        "weight_decay": cfg.weight_decay,
+        "num_workers": cfg.num_workers,
+        "seed": cfg.seed,
+        "device": str(cfg.device),
+        "frames": cfg.frames,
+        "height": cfg.height,
+        "width": cfg.width,
+        "lidar_scale": cfg.lidar_scale,
+        "max_hs": cfg.max_hs,
+        "frame_dropout_rate": cfg.frame_dropout_rate,
+        "temporal_pool": cfg.temporal_pool,
+        "temporal_stride": cfg.temporal_stride,
+        "convlstm_hidden": cfg.convlstm_hidden,
+        "convlstm_layers": cfg.convlstm_layers,
+        "train_augment": cfg.train_augment,
+    }
+
+    run = swanlab.init(
+        project=cfg.swanlab_project,
+        workspace=(str(cfg.swanlab_workspace).strip() or None),
+        experiment_name=experiment_name,
+        tags=tags or None,
+        config=config_dict,
+        logdir=cfg.log_dir,
+    )
+    return run
+
+
 def create_parser():
     parser = argparse.ArgumentParser(
-        description="Train the Temporal Transformer model.",
+        description="Train the ConvLSTM model for uniform-grid wave data.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument("--output-root", type=str, default=Config.output_root, help="Root directory for experiment outputs.")
-    parser.add_argument(
-        "--experiment-name",
-        type=str,
-        default=(Config.experiment_name or get_default_experiment_name("TemporalTransformer")),
-        help="Experiment directory name.",
-    )
+    parser.add_argument("--experiment-name", type=str, default=get_default_experiment_name(), help="Experiment directory name.")
     parser.add_argument("--epochs", type=int, default=Config.epochs, help="Number of training epochs.")
     parser.add_argument("--batch-size", type=int, default=Config.batch_size, help="Training batch size.")
     parser.add_argument("--lr", type=float, default=Config.lr, help="Learning rate.")
@@ -100,35 +142,37 @@ def create_parser():
     parser.add_argument("--seed", type=int, default=Config.seed, help="Random seed.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"], help="Training device.")
 
-    parser.add_argument("--data-root", type=str, default=Config.data_root, help="Dataset root directory.")
-    parser.add_argument("--frame-dropout-rate", type=float, default=Config.frame_dropout_rate, help="Frame dropout rate used by the dataset pipeline.")
+    parser.add_argument("--data-root", type=str, default=DEFAULT_UNIFORM_DATA_ROOT, help="Uniform-grid dataset root directory.")
+    parser.add_argument("--frame-dropout-rate", type=float, default=Config.frame_dropout_rate, help="Frame dropout rate used if training augmentation is enabled.")
 
-    parser.add_argument("--temporal-pool", type=str, default=Config.temporal_pool, choices=["mean", "max", "cls"], help="Temporal pooling mode.")
+    parser.add_argument("--temporal-pool", type=str, default=Config.temporal_pool, choices=["mean", "max"], help="Temporal pooling mode.")
     parser.add_argument("--temporal-stride", type=int, default=Config.temporal_stride, help="Temporal downsampling stride.")
-    parser.add_argument("--vit-embed-dim", type=int, default=Config.vit_embed_dim, help="Transformer embedding dimension.")
-    parser.add_argument("--vit-depth", type=int, default=Config.vit_depth, help="Number of transformer blocks.")
-    parser.add_argument("--vit-num-heads", type=int, default=Config.vit_num_heads, help="Number of attention heads.")
-    parser.add_argument("--vit-mlp-ratio", type=float, default=Config.vit_mlp_ratio, help="Transformer MLP ratio.")
-    parser.add_argument("--vit-dropout", type=float, default=Config.vit_dropout, help="Transformer dropout.")
-    parser.add_argument("--vit-attn-dropout", type=float, default=Config.vit_attn_dropout, help="Transformer attention dropout.")
+    parser.add_argument("--convlstm-hidden", type=int, default=Config.convlstm_hidden, help="ConvLSTM hidden channels.")
+    parser.add_argument("--convlstm-layers", type=int, default=Config.convlstm_layers, help="Number of ConvLSTM layers.")
 
     parser.add_argument("--resume-training", action="store_true", help="Resume from the default latest checkpoint.")
     parser.add_argument("--resume-checkpoint-path", type=str, default="", help="Resume from an explicit checkpoint path.")
     parser.add_argument("--save-latest-checkpoint", dest="save_latest_checkpoint", action="store_true", help="Save latest_checkpoint.pth during training.")
     parser.add_argument("--no-save-latest-checkpoint", dest="save_latest_checkpoint", action="store_false", help="Disable latest checkpoint saving.")
-    parser.add_argument("--disable-train-augment", action="store_true", help="Disable training-time augmentation.")
-    parser.set_defaults(save_latest_checkpoint=Config.save_latest_checkpoint)
+    parser.add_argument("--enable-train-augment", dest="train_augment", action="store_true", help="Enable the existing dataset augmentation pipeline.")
+    parser.add_argument("--disable-train-augment", dest="train_augment", action="store_false", help="Disable training-time augmentation.")
+    parser.add_argument("--enable-swanlab", action="store_true", help="Log training metrics to SwanLab.")
+    parser.add_argument("--swanlab-project", type=str, default="dl-lidar-uniform-grid", help="SwanLab project name.")
+    parser.add_argument("--swanlab-workspace", type=str, default="", help="Optional SwanLab workspace or organization username.")
+    parser.add_argument("--swanlab-experiment-name", type=str, default="", help="Optional SwanLab experiment name. Defaults to experiment-name.")
+    parser.add_argument("--swanlab-tags", type=str, default="", help="Optional comma-separated SwanLab tags.")
+    parser.set_defaults(save_latest_checkpoint=Config.save_latest_checkpoint, train_augment=False)
 
     return parser
 
 
 def build_cfg_from_args(args):
     base_cfg = Config()
-    experiment_name = str(args.experiment_name or "").strip() or get_default_experiment_name("TemporalTransformer")
+    experiment_name = str(args.experiment_name or "").strip() or get_default_experiment_name()
     _, save_dir, results_dir, log_dir = build_experiment_dirs(args.output_root, experiment_name)
 
     return SimpleNamespace(
-        model_name="TemporalTransformer",
+        model_name="ConvLSTMUniformGrid",
         output_root=args.output_root,
         experiment_name=experiment_name,
         data_root=args.data_root,
@@ -148,19 +192,17 @@ def build_cfg_from_args(args):
         frame_dropout_rate=args.frame_dropout_rate,
         temporal_pool=args.temporal_pool,
         temporal_stride=args.temporal_stride,
-        convlstm_hidden=base_cfg.convlstm_hidden,
-        convlstm_layers=base_cfg.convlstm_layers,
-        vit_embed_dim=args.vit_embed_dim,
-        vit_depth=args.vit_depth,
-        vit_num_heads=args.vit_num_heads,
-        vit_mlp_ratio=args.vit_mlp_ratio,
-        vit_dropout=args.vit_dropout,
-        vit_attn_dropout=args.vit_attn_dropout,
+        convlstm_hidden=args.convlstm_hidden,
+        convlstm_layers=args.convlstm_layers,
         resume_training=args.resume_training,
         resume_checkpoint_path=args.resume_checkpoint_path,
         save_latest_checkpoint=args.save_latest_checkpoint,
-        train_augment=not args.disable_train_augment,
-        pretrained=base_cfg.pretrained,
+        train_augment=args.train_augment,
+        enable_swanlab=args.enable_swanlab,
+        swanlab_project=args.swanlab_project,
+        swanlab_workspace=args.swanlab_workspace,
+        swanlab_experiment_name=args.swanlab_experiment_name,
+        swanlab_tags=args.swanlab_tags,
         save_dir=save_dir,
         results_dir=results_dir,
         log_dir=log_dir,
@@ -180,7 +222,8 @@ def run_training(cfg):
     os.makedirs(cfg.log_dir, exist_ok=True)
     os.makedirs(cfg.results_dir, exist_ok=True)
 
-    logger, log_file = setup_logging(cfg.log_dir, "train_transformer")
+    logger, log_file = setup_logging(cfg.log_dir, "train_convlstm_uniform")
+    swanlab_run = init_swanlab(cfg)
     best_model_path = os.path.join(cfg.save_dir, "best_model.pth")
     latest_checkpoint_path = os.path.join(cfg.save_dir, "latest_checkpoint.pth")
     resume_checkpoint_path = resolve_resume_checkpoint_path(cfg, latest_checkpoint_path)
@@ -188,21 +231,24 @@ def run_training(cfg):
     print(f"Training device: {device}")
     print(f"Model name: {cfg.model_name}")
     print(f"Experiment name: {cfg.experiment_name}")
+    print(f"Dataset root: {cfg.data_root}")
     print(f"Checkpoint directory: {cfg.save_dir}")
     print(f"Best model path: {best_model_path}")
     print(f"Latest checkpoint path: {latest_checkpoint_path}")
     print(f"Results directory: {cfg.results_dir}")
     print(f"Log file: {log_file}")
+    print(f"Train augmentation: {cfg.train_augment}")
+    print(f"SwanLab enabled: {cfg.enable_swanlab}")
     print(f"Frame dropout rate: {cfg.frame_dropout_rate:.2f}")
     if resume_checkpoint_path:
         print(f"Resume checkpoint: {resume_checkpoint_path}")
 
     logger.info(
         f"Config: epochs={cfg.epochs}, batch_size={cfg.batch_size}, lr={cfg.lr}, "
-        f"weight_decay={cfg.weight_decay}, frame_dropout_rate={cfg.frame_dropout_rate}, "
-        f"temporal_pool={cfg.temporal_pool}, temporal_stride={cfg.temporal_stride}, "
-        f"vit_embed_dim={cfg.vit_embed_dim}, vit_depth={cfg.vit_depth}, "
-        f"vit_num_heads={cfg.vit_num_heads}, seed={cfg.seed}"
+        f"weight_decay={cfg.weight_decay}, train_augment={cfg.train_augment}, "
+        f"frame_dropout_rate={cfg.frame_dropout_rate}, temporal_pool={cfg.temporal_pool}, "
+        f"temporal_stride={cfg.temporal_stride}, convlstm_hidden={cfg.convlstm_hidden}, "
+        f"convlstm_layers={cfg.convlstm_layers}, seed={cfg.seed}, data_root={cfg.data_root}"
     )
 
     train_ds = LidarWaveDataset(mode="train", augment=cfg.train_augment, cfg=cfg)
@@ -234,7 +280,7 @@ def run_training(cfg):
     criterion_dir = nn.MSELoss()
     criterion_hs = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     start_epoch, best_val_loss, train_losses, val_losses, resumed = load_training_checkpoint(
         model=model,
@@ -270,7 +316,7 @@ def run_training(cfg):
 
             optimizer.zero_grad(set_to_none=True)
 
-            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+            with torch.amp.autocast(device_type=device.type, enabled=(device.type == "cuda")):
                 pred_dir, pred_hs = model(inputs)
                 loss_dir = criterion_dir(pred_dir, target_dir)
                 loss_hs = criterion_hs(pred_hs, target_hs)
@@ -307,7 +353,7 @@ def run_training(cfg):
                 target_dir = target_dir.to(device, non_blocking=True)
                 target_hs = target_hs.to(device, non_blocking=True)
 
-                with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                with torch.amp.autocast(device_type=device.type, enabled=(device.type == "cuda")):
                     pred_dir, pred_hs = model(inputs)
                     loss_dir = criterion_dir(pred_dir, target_dir)
                     loss_hs = criterion_hs(pred_hs, target_hs)
@@ -330,6 +376,20 @@ def run_training(cfg):
             f"Val Loss={avg_val_loss:.4f} (Dir={avg_val_dir_loss:.4f}, Hs={avg_val_hs_loss:.4f})"
         )
         logger.info(summary)
+        if swanlab_run is not None:
+            swanlab_run.log(
+                {
+                    "epoch": epoch + 1,
+                    "train/loss": avg_train_loss,
+                    "train/dir_loss": avg_train_dir_loss,
+                    "train/hs_loss": avg_train_hs_loss,
+                    "val/loss": avg_val_loss,
+                    "val/dir_loss": avg_val_dir_loss,
+                    "val/hs_loss": avg_val_hs_loss,
+                    "best_val_loss": min(best_val_loss, avg_val_loss),
+                },
+                step=epoch + 1,
+            )
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -359,7 +419,7 @@ def run_training(cfg):
     plt.plot(range(1, len(val_losses) + 1), val_losses, label="Validation Loss", linewidth=2)
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
-    plt.title("Temporal Transformer Loss Curve")
+    plt.title("ConvLSTM Uniform Grid Loss Curve")
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
@@ -373,6 +433,15 @@ def run_training(cfg):
     duration_msg = f"Total training time: {hours}h {minutes}m {seconds}s ({total_duration:.2f} seconds)"
     print(duration_msg)
     logger.info(duration_msg)
+    if swanlab_run is not None:
+        swanlab_run.log(
+            {
+                "final/total_training_time_seconds": total_duration,
+                "final/best_val_loss": best_val_loss,
+            },
+            step=cfg.epochs,
+        )
+        swanlab_run.finish()
 
 
 def main():

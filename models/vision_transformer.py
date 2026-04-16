@@ -178,6 +178,47 @@ def build_sinusoidal_temporal_encoding(seq_len, dim, device, dtype):
     return pe.unsqueeze(0).to(dtype=dtype)
 
 
+class TemporalTransformerEncoderLayer(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        mlp_ratio=4.0,
+        dropout=0.1,
+        attn_dropout=0.1,
+    ):
+        super().__init__()
+        hidden_dim = int(embed_dim * mlp_ratio)
+
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=attn_dropout,
+            batch_first=True,
+        )
+        self.attn_out_dropout = nn.Dropout(dropout)
+
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.linear1 = nn.Linear(embed_dim, hidden_dim)
+        self.ffn_dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(hidden_dim, embed_dim)
+        self.out_dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        attn_input = self.norm1(x)
+        attn_output, _ = self.self_attn(attn_input, attn_input, attn_input, need_weights=False)
+        x = x + self.attn_out_dropout(attn_output)
+
+        ffn_input = self.norm2(x)
+        ffn_output = self.linear1(ffn_input)
+        ffn_output = F.gelu(ffn_output)
+        ffn_output = self.ffn_dropout(ffn_output)
+        ffn_output = self.linear2(ffn_output)
+        x = x + self.out_dropout(ffn_output)
+        return x
+
+
 class MultiTaskWaveCNNTemporalTransformer(CoordinateChannelsMixin, nn.Module):
     """
     混合式多任务模型:
@@ -222,16 +263,18 @@ class MultiTaskWaveCNNTemporalTransformer(CoordinateChannelsMixin, nn.Module):
 
         # Transformer 只沿时间维工作。
         # 每一帧先被压成一个 token，因此这里建模的是“帧与帧之间”的关系。
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=int(embed_dim * mlp_ratio),
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
+        self.temporal_encoder = nn.ModuleList(
+            [
+                TemporalTransformerEncoderLayer(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout,
+                    attn_dropout=attn_dropout,
+                )
+                for _ in range(depth)
+            ]
         )
-        self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
         self.temporal_norm = nn.LayerNorm(embed_dim)
 
         # 如果选择 cls 聚合，则引入一个额外的全局 token。
@@ -245,7 +288,7 @@ class MultiTaskWaveCNNTemporalTransformer(CoordinateChannelsMixin, nn.Module):
         self.head_dir = nn.Sequential(
             nn.Linear(embed_dim, 256),
             nn.GELU(),
-            nn.Dropout(attn_dropout),
+            nn.Dropout(dropout),
             nn.Linear(256, 2),
         )
         # 波高分支:
@@ -253,7 +296,7 @@ class MultiTaskWaveCNNTemporalTransformer(CoordinateChannelsMixin, nn.Module):
         self.head_hs = nn.Sequential(
             nn.Linear(embed_dim, 128),
             nn.GELU(),
-            nn.Dropout(attn_dropout),
+            nn.Dropout(dropout),
             nn.Linear(128, 1),
             nn.Sigmoid(),
         )
@@ -324,7 +367,8 @@ class MultiTaskWaveCNNTemporalTransformer(CoordinateChannelsMixin, nn.Module):
         else:
             tokens = frame_tokens
 
-        tokens = self.temporal_encoder(tokens)
+        for encoder_layer in self.temporal_encoder:
+            tokens = encoder_layer(tokens)
         tokens = self.temporal_norm(tokens)
         global_feat = self._pool_temporal_tokens(tokens)
 

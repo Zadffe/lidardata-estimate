@@ -13,33 +13,21 @@ from configs.config import Config
 
 class LidarWaveDataset(Dataset):
     def __init__(self, mode="train", augment=False, cfg=None):
-        """
-        Args:
-            mode: "train" / "val" / "test"
-            augment: 是否启用数据增强
-            cfg: 运行时配置；如果不传，则回退到默认 Config()
-        """
-
         self.cfg = cfg if cfg is not None else Config()
         self.mode = mode
         self.augment = augment
         self.file_list = sorted(glob.glob(os.path.join(self.cfg.data_root, mode, "*.mat")))
 
         if len(self.file_list) == 0:
-            print(f"警告: {mode} 集未找到 .mat 文件")
+            print(f"警告: {mode} 目录下未找到 .mat 文件")
 
-        # 每一帧固定丢失 80% 的有效点，同时保留中心更密、边缘更稀的分布特性。
-        self.frame_dropout_rate = 0.80
+        # 默认 0.80，表示大约丢弃 80% 的有效点。
+        self.frame_dropout_rate = float(getattr(self.cfg, "frame_dropout_rate", 0.80))
 
     def __len__(self):
         return len(self.file_list)
 
     def apply_range_dependent_dropout(self, tensor: np.ndarray) -> np.ndarray:
-        """
-        距离衰减：离中心越远，点云越容易丢失。
-        输入/输出均为 [T, H, W]。
-        """
-
         t_size, height, width = tensor.shape
         y_grid, x_grid = np.ogrid[:height, :width]
         center_y, center_x = (height - 1) / 2.0, (width - 1) / 2.0
@@ -57,10 +45,6 @@ class LidarWaveDataset(Dataset):
         return tensor * signal_mask * random_keep
 
     def apply_framewise_density_jitter(self, tensor: np.ndarray) -> np.ndarray:
-        """
-        每一帧随机一个局部高密度区域，模拟无人机抖动导致的点云密度变化。
-        """
-
         tensor = tensor.copy()
         t_size, height, width = tensor.shape
 
@@ -87,10 +71,6 @@ class LidarWaveDataset(Dataset):
         return tensor
 
     def apply_block_dropout(self, tensor: np.ndarray) -> np.ndarray:
-        """
-        局部块状缺失：随机若干帧或一小段时间内，某个连续区域直接丢失。
-        """
-
         tensor = tensor.copy()
         t_size, height, width = tensor.shape
 
@@ -111,14 +91,10 @@ class LidarWaveDataset(Dataset):
         return tensor
 
     def apply_fixed_frame_dropout(self, tensor: np.ndarray) -> np.ndarray:
-        """
-        对每一帧执行固定比例丢点，同时引入中心先验和局部热点。
-        输入/输出均为 [T, H, W]。
-        """
-
         tensor = tensor.copy()
         t_size, height, width = tensor.shape
         keep_ratio = 1.0 - self.frame_dropout_rate
+
         y_coords = np.arange(height, dtype=np.float32)
         x_coords = np.arange(width, dtype=np.float32)
         yy, xx = np.meshgrid(y_coords, x_coords, indexing="ij")

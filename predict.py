@@ -5,7 +5,7 @@ import torch
 
 from configs.config import Config
 from data.dataset import LidarWaveDataset
-from models.wave_cnn import build_model
+from models.CNN_ConvbLSTM import build_model
 
 
 def resolve_inference_checkpoint_path(cfg):

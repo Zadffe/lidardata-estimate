@@ -119,6 +119,29 @@ Run:
 python evaluate.py
 ```
 
+Choose a specific experiment folder:
+
+```bash
+python evaluate.py \
+  --model-name TemporalTransformer \
+  --experiment-tag datasetsv3_realdataloss_80drop
+```
+
+Choose a specific checkpoint inside one experiment:
+
+```bash
+python evaluate.py \
+  --experiment-name ConvLSTM_dataloss_datasetsv2 \
+  --checkpoint-file epoch_40.pth
+```
+
+Choose a checkpoint directly, and outputs will default to that experiment's `results` directory:
+
+```bash
+python evaluate.py \
+  --checkpoint-path ./all_exps_result/ConvLSTM_dataloss_datasetsv2/checkpoints/best_model.pth
+```
+
 This script:
 
 - loads `best_model.pth`

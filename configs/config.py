@@ -9,9 +9,8 @@ class Config:
     batch_size = 32
     lr = 1e-4
     weight_decay = 1e-4
-    num_workers = 4
-    log_interval = 20
-    save_interval = 20
+    num_workers = 8
+    save_interval = 40
     seed = 42
 
     frames = 64
@@ -19,16 +18,11 @@ class Config:
     width = 101
     max_hs = 6.0
     lidar_scale = 5.0
+    frame_dropout_rate = 0.80
 
-    # 可选模型名称：
-    # - "ConvLSTM"
-    # - "PureCNN"
-    # - "TemporalTransformer"
     model_name = "TemporalTransformer"
     pretrained = False
 
-    # 当 experiment_name 为空时，
-    # 默认使用 "<标准化模型名>_<experiment_tag>" 作为实验目录名。
     experiment_tag = "datasetsv3_realdataloss_80drop"
     experiment_name = ""
 
@@ -39,7 +33,6 @@ class Config:
 
     inference_use_latest_checkpoint = False
     inference_checkpoint_path = ""
-
     test_augment = True
 
     convlstm_hidden = 64

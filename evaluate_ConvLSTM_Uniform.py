@@ -16,8 +16,11 @@ from tqdm import tqdm
 
 from configs.config import Config
 from data.dataset import LidarWaveDataset
-from models.CNN_ConvbLSTM import build_model
+from models.CNN_ConvLSTM_Uniform import build_model
 from utils.checkpoint_utils import load_model_weights
+
+
+DEFAULT_UNIFORM_DATA_ROOT = r"F:\Research__dir\dl_lidar\datasets\Dataset_Wave_Lidar_10000samples_uniform_grid"
 
 
 sns.set_theme(style="whitegrid", context="talk")
@@ -50,40 +53,8 @@ def resolve_device(device_arg):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def get_default_experiment_name(model_name):
-    normalized = Config._normalize_model_dir_name(model_name)
-    mapping = {
-        "ConvLSTM": "convlstm_default",
-        "CNN": "cnn_default",
-        "TemporalTransformer": "transformer_default",
-    }
-    return mapping.get(normalized, f"{normalized.lower()}_default")
-
-
-def resolve_experiment_name(model_name, explicit_experiment_name="", experiment_tag="", base_cfg=None):
-    explicit_experiment_name = str(explicit_experiment_name or "").strip()
-    if explicit_experiment_name:
-        return explicit_experiment_name
-
-    normalized_model_name = Config._normalize_model_dir_name(model_name)
-    experiment_tag = str(experiment_tag or "").strip()
-    if experiment_tag:
-        return f"{normalized_model_name}_{experiment_tag}"
-
-    if base_cfg is None:
-        base_cfg = Config()
-
-    configured_model_name = Config._normalize_model_dir_name(getattr(base_cfg, "model_name", normalized_model_name))
-    if configured_model_name == normalized_model_name:
-        configured_experiment_name = str(getattr(base_cfg, "experiment_name", "") or "").strip()
-        if configured_experiment_name:
-            return configured_experiment_name
-
-        configured_experiment_tag = str(getattr(base_cfg, "experiment_tag", "") or "").strip()
-        if configured_experiment_tag:
-            return f"{normalized_model_name}_{configured_experiment_tag}"
-
-    return get_default_experiment_name(model_name)
+def get_default_experiment_name():
+    return "ConvLSTM_uniform_grid_default"
 
 
 def build_experiment_dirs(output_root, experiment_name):
@@ -126,12 +97,7 @@ def build_eval_cfg_from_args(args):
         log_dir = checkpoint_layout["log_dir"]
         checkpoint_path = os.path.abspath(checkpoint_path)
     else:
-        experiment_name = resolve_experiment_name(
-            model_name=args.model_name,
-            explicit_experiment_name=args.experiment_name,
-            experiment_tag=args.experiment_tag,
-            base_cfg=base_cfg,
-        )
+        experiment_name = str(args.experiment_name or "").strip() or get_default_experiment_name()
         _, save_dir, default_results_dir, log_dir = build_experiment_dirs(args.output_root, experiment_name)
 
         if not checkpoint_path:
@@ -142,46 +108,32 @@ def build_eval_cfg_from_args(args):
 
     output_dir = str(args.output_dir or "").strip() or default_results_dir
 
-    cfg = {
-        "model_name": args.model_name,
-        "output_root": args.output_root,
-        "experiment_name": experiment_name,
-        "experiment_tag": str(args.experiment_tag or "").strip(),
-        "data_root": args.data_root,
-        "batch_size": args.batch_size,
-        "num_workers": args.num_workers,
-        "frames": base_cfg.frames,
-        "height": base_cfg.height,
-        "width": base_cfg.width,
-        "lidar_scale": base_cfg.lidar_scale,
-        "max_hs": base_cfg.max_hs,
-        "frame_dropout_rate": args.frame_dropout_rate,
-        "temporal_pool": args.temporal_pool,
-        "temporal_stride": args.temporal_stride,
-        "convlstm_hidden": args.convlstm_hidden,
-        "convlstm_layers": args.convlstm_layers,
-        "vit_embed_dim": args.vit_embed_dim,
-        "vit_depth": args.vit_depth,
-        "vit_num_heads": args.vit_num_heads,
-        "vit_mlp_ratio": args.vit_mlp_ratio,
-        "vit_dropout": args.vit_dropout,
-        "vit_attn_dropout": args.vit_attn_dropout,
-        "save_dir": save_dir,
-        "results_dir": output_dir,
-        "log_dir": log_dir,
-        "test_augment": args.test_augment,
-        "checkpoint_path": checkpoint_path,
-        "checkpoint_file": str(args.checkpoint_file or "").strip(),
-        "device": args.device,
-        "inference_use_latest_checkpoint": args.use_latest_checkpoint,
-    }
-
-    for name in dir(base_cfg):
-        if name.startswith("_") or callable(getattr(base_cfg, name)):
-            continue
-        cfg.setdefault(name, getattr(base_cfg, name))
-
-    return SimpleNamespace(**cfg)
+    return SimpleNamespace(
+        model_name="ConvLSTMUniformGrid",
+        output_root=args.output_root,
+        experiment_name=experiment_name,
+        data_root=args.data_root,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        frames=base_cfg.frames,
+        height=base_cfg.height,
+        width=base_cfg.width,
+        lidar_scale=base_cfg.lidar_scale,
+        max_hs=base_cfg.max_hs,
+        frame_dropout_rate=args.frame_dropout_rate,
+        convlstm_hidden=args.convlstm_hidden,
+        convlstm_layers=args.convlstm_layers,
+        temporal_pool=args.temporal_pool,
+        temporal_stride=args.temporal_stride,
+        save_dir=save_dir,
+        results_dir=output_dir,
+        log_dir=log_dir,
+        test_augment=args.test_augment,
+        checkpoint_path=checkpoint_path,
+        checkpoint_file=str(args.checkpoint_file or "").strip(),
+        device=args.device,
+        inference_use_latest_checkpoint=args.use_latest_checkpoint,
+    )
 
 
 def circular_r2_score(y_true, y_pred):
@@ -207,38 +159,23 @@ def circular_r2_score(y_true, y_pred):
 
 
 def create_parser():
-    default_model = Config._normalize_model_dir_name(Config.model_name)
-    if default_model not in {"ConvLSTM", "CNN", "TemporalTransformer"}:
-        default_model = "TemporalTransformer"
-
     parser = argparse.ArgumentParser(
-        description="Evaluate a trained model on the test split and save CSV metrics plus summary figures.",
+        description="Evaluate the ConvLSTM uniform-grid model on the test split and save CSV metrics plus summary figures.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python evaluate.py --model-name TemporalTransformer --experiment-tag datasetsv3_realdataloss_80drop\n"
-            "  python evaluate.py --experiment-name ConvLSTM_dataloss_datasetsv2 --checkpoint-file epoch_40.pth\n"
-            "  python evaluate.py --checkpoint-path ./all_exps_result/ConvLSTM_xxx/checkpoints/best_model.pth"
+            "  python evaluate_ConvLSTM_Uniform.py --experiment-name ConvLSTM_uniform_dataloss0.8_v1\n"
+            "  python evaluate_ConvLSTM_Uniform.py --experiment-name ConvLSTM_uniform_dataloss0.8_v1 --checkpoint-file epoch_100.pth\n"
+            "  python evaluate_ConvLSTM_Uniform.py --checkpoint-path ./all_exps_result/ConvLSTM_uniform_dataloss0.8_v1/checkpoints/best_model.pth"
         ),
     )
-    parser.add_argument(
-        "--model-name",
-        default=default_model,
-        choices=["ConvLSTM", "CNN", "PureCNN", "TemporalTransformer"],
-        help="Model architecture used for evaluation.",
-    )
     parser.add_argument("--output-root", default=Config.output_root, help="Root directory that stores all experiment folders.")
-    parser.add_argument("--experiment-name", default=(Config.experiment_name or ""), help="Experiment directory name under output root.")
-    parser.add_argument(
-        "--experiment-tag",
-        default="",
-        help="Optional experiment tag. When experiment-name is empty, the directory becomes <model-name>_<experiment-tag>.",
-    )
+    parser.add_argument("--experiment-name", default="", help="Experiment directory name under output root.")
     parser.add_argument("--checkpoint-path", default="", help="Explicit checkpoint path. Overrides experiment-based checkpoint lookup.")
     parser.add_argument(
         "--checkpoint-file",
         default="",
-        help="Checkpoint filename inside the experiment checkpoints directory, for example best_model.pth or epoch_80.pth.",
+        help="Checkpoint filename inside the experiment checkpoints directory, for example best_model.pth or epoch_100.pth.",
     )
     parser.add_argument(
         "--output-dir",
@@ -255,25 +192,13 @@ def create_parser():
         help="Use latest_checkpoint.pth when checkpoint-file and checkpoint-path are not provided.",
     )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device used for evaluation.")
-    parser.set_defaults(test_augment=Config.test_augment)
+    parser.set_defaults(test_augment=False)
 
-    parser.add_argument("--data-root", default=Config.data_root, help="Dataset root directory.")
+    parser.add_argument("--data-root", default=DEFAULT_UNIFORM_DATA_ROOT, help="Uniform-grid dataset root directory.")
     parser.add_argument("--frame-dropout-rate", type=float, default=Config.frame_dropout_rate, help="Frame dropout rate used by the dataset pipeline.")
-
     parser.add_argument("--convlstm-hidden", type=int, default=Config.convlstm_hidden, help="ConvLSTM hidden channels.")
     parser.add_argument("--convlstm-layers", type=int, default=Config.convlstm_layers, help="Number of ConvLSTM layers.")
-    parser.add_argument("--vit-embed-dim", type=int, default=Config.vit_embed_dim, help="Transformer embedding dimension.")
-    parser.add_argument("--vit-depth", type=int, default=Config.vit_depth, help="Number of transformer blocks.")
-    parser.add_argument("--vit-num-heads", type=int, default=Config.vit_num_heads, help="Number of attention heads.")
-    parser.add_argument("--vit-mlp-ratio", type=float, default=Config.vit_mlp_ratio, help="Transformer MLP ratio.")
-    parser.add_argument("--vit-dropout", type=float, default=Config.vit_dropout, help="Transformer dropout.")
-    parser.add_argument("--vit-attn-dropout", type=float, default=Config.vit_attn_dropout, help="Transformer attention dropout.")
-    parser.add_argument(
-        "--temporal-pool",
-        choices=["mean", "max", "cls"],
-        default=Config.temporal_pool,
-        help="Temporal pooling strategy.",
-    )
+    parser.add_argument("--temporal-pool", choices=["mean", "max"], default=Config.temporal_pool, help="Temporal pooling strategy.")
     parser.add_argument("--temporal-stride", type=int, default=Config.temporal_stride, help="Temporal downsampling stride.")
     return parser
 
@@ -285,7 +210,7 @@ def make_summary_figure(true_hs, pred_hs, true_dir, pred_dir, metrics, save_path
     diff_dir_abs = np.abs(diff_dir_signed)
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 10), dpi=180)
-    fig.suptitle("Wave Height and Direction Evaluation Summary", fontsize=18, y=1.02)
+    fig.suptitle("Uniform Grid Wave Height and Direction Evaluation Summary", fontsize=18, y=1.02)
 
     ax = axes[0, 0]
     ax.scatter(true_hs, pred_hs, s=22, alpha=0.65, c="#1f77b4", edgecolors="none")
@@ -373,12 +298,13 @@ def evaluate_and_plot(args):
     device = resolve_device(cfg.device)
 
     os.makedirs(cfg.results_dir, exist_ok=True)
-    logger, log_file = setup_logging(cfg.log_dir, "evaluate")
+    logger, log_file = setup_logging(cfg.log_dir, "evaluate_convlstm_uniform")
 
     print(f"Device: {device}")
     print(f"Model name: {cfg.model_name}")
     print(f"Experiment name: {cfg.experiment_name}")
     print(f"Checkpoint path: {cfg.checkpoint_path}")
+    print(f"Dataset root: {cfg.data_root}")
     print(f"Results directory: {cfg.results_dir}")
     print(f"Log file: {log_file}")
     print(f"Test augmentation: {cfg.test_augment}")
@@ -387,6 +313,7 @@ def evaluate_and_plot(args):
     logger.info(f"Model name: {cfg.model_name}")
     logger.info(f"Experiment name: {cfg.experiment_name}")
     logger.info(f"Checkpoint path: {cfg.checkpoint_path}")
+    logger.info(f"Dataset root: {cfg.data_root}")
     logger.info(f"Results directory: {cfg.results_dir}")
     logger.info(f"Test augmentation: {cfg.test_augment}")
 
@@ -487,15 +414,7 @@ def evaluate_and_plot(args):
         f"\nHs: R2={metrics['r2_hs']:.4f} | RMSE={metrics['rmse_hs']:.4f} m | "
         f"MAE={metrics['mae_hs']:.4f} m | Bias={metrics['bias_hs']:.4f} m"
     )
-    logger.info(
-        f"Hs: R2={metrics['r2_hs']:.4f} | RMSE={metrics['rmse_hs']:.4f} m | "
-        f"MAE={metrics['mae_hs']:.4f} m | Bias={metrics['bias_hs']:.4f} m"
-    )
     print(
-        f"Dir: R2={metrics['r2_dir']:.4f} | RMSE={metrics['rmse_dir']:.4f} deg | "
-        f"MAE={metrics['mae_dir']:.4f} deg | Bias={metrics['bias_dir']:.4f} deg"
-    )
-    logger.info(
         f"Dir: R2={metrics['r2_dir']:.4f} | RMSE={metrics['rmse_dir']:.4f} deg | "
         f"MAE={metrics['mae_dir']:.4f} deg | Bias={metrics['bias_dir']:.4f} deg"
     )
